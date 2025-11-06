@@ -111,26 +111,100 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
   
   console.log(`📝 Received /request-time-off from user ${body.user_id}`);
   
-  // Use default options immediately (don't wait for PeopleForce API)
-  const typeOptions = [
-    { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
-    { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
-    { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
-    { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
-  ];
-  
-  // Try to fetch time-off types from PeopleForce in background (non-blocking)
-  getTimeOffTypes().then(timeOffTypes => {
-    if (timeOffTypes && timeOffTypes.length > 0) {
-      console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce`);
-      // Note: In future, we could update the modal dynamically with these types
-    }
-  }).catch(fetchError => {
-    console.error('Error fetching time-off types (non-blocking):', fetchError);
-    // Ignore - we already have default options
-  });
-  
   try {
+    // Fetch time-off types from PeopleForce (with timeout protection)
+    let timeOffTypes = [];
+    let typeOptions = [];
+    
+    try {
+      // Fetch with 3 second timeout
+      timeOffTypes = await Promise.race([
+        getTimeOffTypes(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout fetching time-off types')), 3000)
+        )
+      ]);
+      
+      if (timeOffTypes && timeOffTypes.length > 0) {
+        console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce`);
+        
+        // Build options from PeopleForce leave types
+        typeOptions = timeOffTypes.map(type => ({
+          text: {
+            type: 'plain_text',
+            text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
+          },
+          value: String(type.id),
+          description: type.description ? {
+            type: 'plain_text',
+            text: type.description.substring(0, 75) // Limit description length
+          } : undefined,
+        }));
+      }
+    } catch (fetchError) {
+      console.error('Error fetching time-off types:', fetchError);
+      // Continue with default options if fetch fails
+    }
+    
+    // If no types found or fetch failed, use default options
+    if (typeOptions.length === 0) {
+      typeOptions = [
+        { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
+        { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
+        { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
+        { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
+      ];
+      console.log('⚠️  Using default leave types (PeopleForce API unavailable)');
+    }
+    
+    // Build modal blocks - base fields that are always needed
+    const blocks = [
+      {
+        type: 'input',
+        block_id: 'type_block',
+        label: { type: 'plain_text', text: 'Leave Type' },
+        element: {
+          type: 'static_select',
+          action_id: 'leave_type',
+          placeholder: { type: 'plain_text', text: 'Select leave type' },
+          options: typeOptions,
+        },
+      },
+      {
+        type: 'input',
+        block_id: 'start_block',
+        label: { type: 'plain_text', text: 'Start Date' },
+        element: {
+          type: 'datepicker',
+          action_id: 'start_date',
+          initial_date: new Date().toISOString().split('T')[0],
+        },
+      },
+      {
+        type: 'input',
+        block_id: 'end_block',
+        label: { type: 'plain_text', text: 'End Date' },
+        element: {
+          type: 'datepicker',
+          action_id: 'end_date',
+          initial_date: new Date().toISOString().split('T')[0],
+        },
+      },
+    ];
+    
+    // Add comment/reason field (always available)
+    blocks.push({
+      type: 'input',
+      block_id: 'comment_block',
+      label: { type: 'plain_text', text: 'Reason/Comment' },
+      optional: true,
+      element: {
+        type: 'plain_text_input',
+        action_id: 'comment',
+        multiline: true,
+        placeholder: { type: 'plain_text', text: 'Add any additional details...' },
+      },
+    });
     
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -140,59 +214,23 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
         title: { type: 'plain_text', text: 'Request Time Off' },
         submit: { type: 'plain_text', text: 'Submit' },
         close: { type: 'plain_text', text: 'Cancel' },
-        blocks: [
-          {
-            type: 'input',
-            block_id: 'type_block',
-            label: { type: 'plain_text', text: 'Leave Type' },
-            element: {
-              type: 'static_select',
-              action_id: 'leave_type',
-              placeholder: { type: 'plain_text', text: 'Select leave type' },
-              options: typeOptions,
-            },
-          },
-          {
-            type: 'input',
-            block_id: 'start_block',
-            label: { type: 'plain_text', text: 'Start Date' },
-            element: {
-              type: 'datepicker',
-              action_id: 'start_date',
-              initial_date: new Date().toISOString().split('T')[0],
-            },
-          },
-          {
-            type: 'input',
-            block_id: 'end_block',
-            label: { type: 'plain_text', text: 'End Date' },
-            element: {
-              type: 'datepicker',
-              action_id: 'end_date',
-              initial_date: new Date().toISOString().split('T')[0],
-            },
-          },
-          {
-            type: 'input',
-            block_id: 'comment_block',
-            label: { type: 'plain_text', text: 'Comment (optional)' },
-            optional: true,
-            element: {
-              type: 'plain_text_input',
-              action_id: 'comment',
-              multiline: true,
-              placeholder: { type: 'plain_text', text: 'Add any additional details...' },
-            },
-          },
-        ],
+        blocks: blocks,
       },
     });
+    
+    console.log(`✅ Opened time-off modal with ${typeOptions.length} leave type(s) for user ${body.user_id}`);
   } catch (error) {
     console.error('Error opening time-off modal:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      data: error.data
+    });
+    
     try {
       await client.chat.postMessage({
         channel: body.user_id,
-        text: `❌ Sorry, I couldn't open the time-off request form. Error: ${error.message}`,
+        text: `❌ Sorry, I couldn't open the time-off request form.\n\nError: ${error.message}\n\nPlease try again or contact your administrator.`,
       });
     } catch (msgError) {
       console.error('Error sending error message:', msgError);
