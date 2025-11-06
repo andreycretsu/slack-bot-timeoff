@@ -66,7 +66,8 @@ NOTIFICATION_CHANNEL=
 
 1. Go to **"OAuth & Permissions"** in the sidebar
 2. Scroll down to **"Scopes"** → **"Bot Token Scopes"**
-3. Add the following scopes:
+3. Click **"Add an OAuth Scope"** button
+4. Add the following scopes to **Bot Token Scopes**:
    - `commands` - For slash commands
    - `chat:write` - To send messages
    - `users:read` - To read user info
@@ -74,12 +75,15 @@ NOTIFICATION_CHANNEL=
    - `users.profile:write` - To update user statuses
    - `files:read` - **REQUIRED for document uploads** in modals
 
-4. Scroll down to **"User Token Scopes"** and add:
+5. Scroll down to **"User Token Scopes"** section
+6. Click **"Add an OAuth Scope"** button
+7. Add the following scopes to **User Token Scopes**:
    - `users.profile:write` - To update user statuses (REQUIRED for status updates)
+   - `users:read` - To read user info
 
-5. Scroll up and click **"Install to Workspace"**
-6. Copy the **Bot User OAuth Token** (starts with `xoxb-`) and add it to your `.env` file as `SLACK_BOT_TOKEN`
-7. Copy the **User OAuth Token** (starts with `xoxp-`) and add it to your `.env` file as `SLACK_USER_TOKEN`
+8. Scroll up and click **"Install to Workspace"** (or **"Reinstall to Workspace"** if you added new scopes)
+9. Copy the **Bot User OAuth Token** (starts with `xoxb-`) and add it to your `.env` file as `SLACK_BOT_TOKEN`
+10. Copy the **User OAuth Token** (starts with `xoxp-`) and add it to your `.env` file as `SLACK_USER_TOKEN`
 
 **Important**: The User Token is required to update other users' statuses. Without it, status updates will fail.
 
