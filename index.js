@@ -517,7 +517,6 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       isOnDemand: isOnDemand
     });
   
-  try {
     // Get Slack user info to get email
     const userInfo = await client.users.info({ user: slackUserId });
     const email = userInfo.user.profile?.email;
