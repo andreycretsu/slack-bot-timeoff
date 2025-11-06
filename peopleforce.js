@@ -80,6 +80,29 @@ export async function getLeaveTypeById(leaveTypeId) {
 }
 
 /**
+ * Upload a document to PeopleForce (if API supports it)
+ * @param {string} fileUrl - URL of the file to upload
+ * @param {string} fileName - Name of the file
+ * @returns {string|null} - Document ID or URL if successful
+ */
+export async function uploadDocument(fileUrl, fileName) {
+  try {
+    // Note: Check PeopleForce API docs for document upload endpoint
+    // This is a placeholder - you'll need to implement based on PeopleForce API
+    console.log(`📎 Uploading document to PeopleForce: ${fileName} from ${fileUrl}`);
+    
+    // TODO: Implement document upload to PeopleForce API
+    // Example endpoint might be: POST /api/public/v3/leave_requests/{id}/documents
+    // Or: POST /api/public/v3/documents
+    
+    return null; // Return document ID when implemented
+  } catch (error) {
+    console.error('Error uploading document to PeopleForce:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
  * Create a time-off request in PeopleForce
  * @param {number} employeeId - Employee ID
  * @param {number} timeOffTypeId - Leave type ID
@@ -88,8 +111,9 @@ export async function getLeaveTypeById(leaveTypeId) {
  * @param {string} description - Reason/description for leave
  * @param {Array} entries - Optional array of leave request entries for partial days
  * @param {boolean} skipApproval - Optional flag to skip approval (for testing)
+ * @param {string} documentUrl - Optional URL to attached document
  */
-export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '', entries = null, skipApproval = false) {
+export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '', entries = null, skipApproval = false, documentUrl = null) {
   try {
     const payload = {
       employee_id: employeeId,

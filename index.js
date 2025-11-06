@@ -162,7 +162,7 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
       // Ignore - we already have default options
     });
     
-    // Build modal blocks
+    // Build modal blocks - base fields
     const blocks = [
       {
         type: 'input',
@@ -206,6 +206,20 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
           action_id: 'comment',
           multiline: true,
           placeholder: { type: 'plain_text', text: 'Add any additional details or reason for leave...' },
+        },
+      },
+      // Add document upload field (always visible, but can be made required dynamically)
+      {
+        type: 'input',
+        block_id: 'document_block',
+        label: { type: 'plain_text', text: 'Supporting Document' },
+        hint: { type: 'plain_text', text: 'Upload supporting documents (e.g., medical certificate, proof of leave)' },
+        optional: true,
+        element: {
+          type: 'file_input',
+          action_id: 'document_upload',
+          filetypes: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'],
+          max_files: 1,
         },
       },
     ];
@@ -307,13 +321,18 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     const startDate = view.state.values.start_block.start_date.selected_date;
     const endDate = view.state.values.end_block.end_date.selected_date;
     const comment = view.state.values.comment_block?.comment?.value || '';
+    
+    // Get document upload if provided
+    const documentUpload = view.state.values.document_block?.document_upload?.files || [];
+    const hasDocument = documentUpload.length > 0;
   
     console.log(`📝 Processing time-off request:`, {
       userId: slackUserId,
       leaveTypeId,
       startDate,
       endDate,
-      hasComment: !!comment
+      hasComment: !!comment,
+      hasDocument: hasDocument
     });
   
   try {
@@ -335,17 +354,63 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     // Store mapping for future use
     userEmailMap[email.toLowerCase()] = slackUserId;
     
-    // Get leave type details to check for required fields (optional)
+    // Get leave type details to check for required fields
     let leaveTypeDetails = null;
+    let requiresDocument = false;
     try {
       leaveTypeDetails = await getLeaveTypeById(parseInt(leaveTypeId));
       console.log(`✅ Found leave type details:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
-        id: leaveTypeDetails?.id
+        id: leaveTypeDetails?.id,
+        requiresDocument: leaveTypeDetails?.requires_document || leaveTypeDetails?.document_required || false
       });
+      
+      // Check if document is required (based on leave type settings)
+      requiresDocument = leaveTypeDetails?.requires_document || 
+                         leaveTypeDetails?.document_required || 
+                         leaveTypeDetails?.requires_attachment || 
+                         false;
+      
+      // If document is required but not provided, reject submission
+      if (requiresDocument && !hasDocument) {
+        throw new Error('This leave type requires a supporting document. Please upload a document and try again.');
+      }
     } catch (typeError) {
+      if (typeError.message.includes('requires a supporting document')) {
+        throw typeError; // Re-throw validation errors
+      }
       console.warn('Could not fetch leave type details:', typeError.message);
       // Continue anyway - not critical
+    }
+    
+    // Handle document upload if provided
+    let documentUrl = null;
+    if (hasDocument) {
+      try {
+        const fileId = documentUpload[0].id;
+        console.log(`📎 Processing document upload: ${fileId}`);
+        
+        // Get file info from Slack
+        const fileInfo = await client.files.info({ file: fileId });
+        const fileUrl = fileInfo.file.url_private;
+        
+        // Download file from Slack
+        const fileResponse = await client.files.sharedPublicURL({ file: fileId }).catch(() => {
+          // If file is private, we need to download it using the bot token
+          // For now, just store the URL - PeopleForce API might accept file URLs
+          return { file: { permalink_public: fileUrl } };
+        });
+        
+        documentUrl = fileInfo.file.url_private || fileInfo.file.permalink_public;
+        console.log(`✅ Document processed: ${documentUrl}`);
+        
+        // Note: You'll need to upload this to PeopleForce API
+        // Check PeopleForce API docs for document upload endpoint
+      } catch (fileError) {
+        console.error('Error processing document:', fileError);
+        // Don't fail the request if document processing fails
+        // Just log it and continue
+      }
     }
     
     // Create time-off request
@@ -357,8 +422,21 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       endDate,
       comment || '', // Use comment as description
       null, // leave_request_entries (for partial days) - not implemented yet
-      false // skip_approval - keep false to require approval
+      false, // skip_approval - keep false to require approval
+      documentUrl // document URL if provided
     );
+    
+    // If document was uploaded and request was created, attach document
+    if (hasDocument && documentUrl && timeOff.id) {
+      try {
+        // TODO: Upload document to PeopleForce after request is created
+        // This depends on PeopleForce API - check docs for document attachment endpoint
+        console.log(`📎 Document uploaded: ${documentUrl} - TODO: Attach to leave request ${timeOff.id}`);
+      } catch (docError) {
+        console.error('Error attaching document to leave request:', docError);
+        // Don't fail the request if document attachment fails
+      }
+    }
     
     // Format response message
     const startDateFormatted = new Date(startDate).toLocaleDateString('en-US', { 
