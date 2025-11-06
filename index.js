@@ -101,27 +101,43 @@ async function initialize() {
  * Slash command /request-time-off - Opens modal to request time off
  */
 app.command('/request-time-off', async ({ ack, body, client }) => {
+  // Acknowledge immediately to prevent timeout
+  await ack();
+  
   try {
-    await ack();
-    // Fetch time-off types from PeopleForce
-    const timeOffTypes = await getTimeOffTypes();
+    // Fetch time-off types from PeopleForce (with timeout handling)
+    let timeOffTypes = [];
+    try {
+      timeOffTypes = await Promise.race([
+        getTimeOffTypes(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout fetching time-off types')), 5000)
+        )
+      ]);
+    } catch (fetchError) {
+      console.error('Error fetching time-off types:', fetchError);
+      // Continue with default options if fetch fails
+    }
     
     // Build options for the dropdown
-    const typeOptions = timeOffTypes.map(type => ({
-      text: {
-        type: 'plain_text',
-        text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
-      },
-      value: String(type.id),
-    }));
+    let typeOptions = [];
+    if (timeOffTypes && timeOffTypes.length > 0) {
+      typeOptions = timeOffTypes.map(type => ({
+        text: {
+          type: 'plain_text',
+          text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
+        },
+        value: String(type.id),
+      }));
+    }
     
     // If no types found, use default options
     if (typeOptions.length === 0) {
-      typeOptions.push(
+      typeOptions = [
         { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
         { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
         { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' }
-      );
+      ];
     }
     
     await client.views.open({
@@ -181,10 +197,14 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
     });
   } catch (error) {
     console.error('Error opening time-off modal:', error);
-    await client.chat.postMessage({
-      channel: body.user_id,
-      text: `❌ Sorry, I couldn't open the time-off request form. Please try again later.`,
-    });
+    try {
+      await client.chat.postMessage({
+        channel: body.user_id,
+        text: `❌ Sorry, I couldn't open the time-off request form. Error: ${error.message}`,
+      });
+    } catch (msgError) {
+      console.error('Error sending error message:', msgError);
+    }
   }
 });
 
@@ -281,8 +301,10 @@ function getEmojiForType(typeName) {
  * Manual sync command (for admins/testing)
  */
 app.command('/sync-statuses', async ({ ack, body, client }) => {
+  // Acknowledge immediately
+  await ack();
+  
   try {
-    await ack();
     await client.chat.postMessage({
       channel: body.user_id,
       text: '🔄 Starting manual sync...',
@@ -296,10 +318,14 @@ app.command('/sync-statuses', async ({ ack, body, client }) => {
     });
   } catch (error) {
     console.error('Error in manual sync:', error);
-    await client.chat.postMessage({
-      channel: body.user_id,
-      text: `❌ Sync failed: ${error.message}`,
-    });
+    try {
+      await client.chat.postMessage({
+        channel: body.user_id,
+        text: `❌ Sync failed: ${error.message}`,
+      });
+    } catch (msgError) {
+      console.error('Error sending error message:', msgError);
+    }
   }
 });
 
