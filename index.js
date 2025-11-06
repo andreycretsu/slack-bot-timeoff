@@ -352,132 +352,183 @@ app.action('leave_type', async ({ ack, body, client }) => {
         getLeavePolicyByTypeId(selectedTypeId).catch(() => null) // Policy fetch is optional
       ]);
       
-      // Log the full API response to see what fields are actually available
-      console.log(`📋 Leave type API response:`, JSON.stringify(leaveTypeDetails, null, 2));
+      // Log the FULL API response including nested objects to see ALL available fields
+      console.log(`📋 FULL Leave type API response:`, JSON.stringify(leaveTypeDetails, null, 2));
       if (leavePolicy) {
-        console.log(`📋 Leave policy API response:`, JSON.stringify(leavePolicy, null, 2));
+        console.log(`📋 FULL Leave policy API response:`, JSON.stringify(leavePolicy, null, 2));
       }
       
+      // Helper function to check nested properties recursively
+      const hasProperty = (obj, ...paths) => {
+        if (!obj) return false;
+        for (const path of paths) {
+          const parts = path.split('.');
+          let current = obj;
+          for (const part of parts) {
+            if (current === null || current === undefined) break;
+            current = current[part];
+            if (current === null || current === undefined) break;
+          }
+          if (current !== null && current !== undefined && current !== false) {
+            return true;
+          }
+        }
+        return false;
+      };
+      
       // Check what fields are required for this leave type
-      // Try multiple possible field names from both leave type and policy
-      const requiresDocument = leaveTypeDetails?.requires_document || 
-                               leaveTypeDetails?.document_required || 
-                               leaveTypeDetails?.requires_attachment ||
-                               leavePolicy?.requires_document ||
-                               leavePolicy?.document_required ||
-                               leavePolicy?.requires_attachment ||
-                               false;
+      // Try multiple possible field names from both leave type and policy, including nested paths
+      const requiresDocument = 
+        leaveTypeDetails?.requires_document || 
+        leaveTypeDetails?.document_required || 
+        leaveTypeDetails?.requires_attachment ||
+        leaveTypeDetails?.document?.required ||
+        leaveTypeDetails?.attachment?.required ||
+        leavePolicy?.requires_document ||
+        leavePolicy?.document_required ||
+        leavePolicy?.requires_attachment ||
+        leavePolicy?.document?.required ||
+        leavePolicy?.attachment?.required ||
+        hasProperty(leaveTypeDetails, 'document_required', 'attachment_required', 'requires_document') ||
+        hasProperty(leavePolicy, 'document_required', 'attachment_required', 'requires_document') ||
+        false;
       
-      const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
-                               leaveTypeDetails?.supports_on_demand || 
-                               leaveTypeDetails?.on_demand_enabled ||
-                               leaveTypeDetails?.on_demand ||
-                               leavePolicy?.allows_on_demand ||
-                               leavePolicy?.supports_on_demand ||
-                               leavePolicy?.on_demand_enabled ||
-                               false;
+      const supportsOnDemand = 
+        leaveTypeDetails?.allows_on_demand || 
+        leaveTypeDetails?.supports_on_demand || 
+        leaveTypeDetails?.on_demand_enabled ||
+        leaveTypeDetails?.on_demand ||
+        leaveTypeDetails?.on_demand?.allowed ||
+        leaveTypeDetails?.on_demand?.enabled ||
+        leavePolicy?.allows_on_demand ||
+        leavePolicy?.supports_on_demand ||
+        leavePolicy?.on_demand_enabled ||
+        leavePolicy?.on_demand ||
+        leavePolicy?.on_demand?.allowed ||
+        leavePolicy?.on_demand?.enabled ||
+        hasProperty(leaveTypeDetails, 'on_demand.enabled', 'on_demand.allowed', 'allows_on_demand') ||
+        hasProperty(leavePolicy, 'on_demand.enabled', 'on_demand.allowed', 'allows_on_demand') ||
+        false;
       
-      const requiresComment = leaveTypeDetails?.requires_reason || 
-                              leaveTypeDetails?.requires_description || 
-                              leaveTypeDetails?.requires_comment ||
-                              leavePolicy?.requires_reason ||
-                              leavePolicy?.requires_description ||
-                              leavePolicy?.requires_comment ||
-                              false;
+      const requiresComment = 
+        leaveTypeDetails?.requires_reason || 
+        leaveTypeDetails?.requires_description || 
+        leaveTypeDetails?.requires_comment ||
+        leaveTypeDetails?.description?.required ||
+        leaveTypeDetails?.comment?.required ||
+        leavePolicy?.requires_reason ||
+        leavePolicy?.requires_description ||
+        leavePolicy?.requires_comment ||
+        leavePolicy?.description?.required ||
+        leavePolicy?.comment?.required ||
+        hasProperty(leaveTypeDetails, 'description_required', 'comment_required', 'requires_reason') ||
+        hasProperty(leavePolicy, 'description_required', 'comment_required', 'requires_reason') ||
+        false;
       
       console.log(`📋 Parsed leave type settings:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
         requiresDocument,
         supportsOnDemand,
         requiresComment,
-        allFields: Object.keys(leaveTypeDetails || {}),
-        policyFields: Object.keys(leavePolicy || {})
+        allLeaveTypeFields: Object.keys(leaveTypeDetails || {}),
+        allPolicyFields: Object.keys(leavePolicy || {}),
+        leaveTypeFull: leaveTypeDetails,
+        policyFull: leavePolicy
       });
       
       // Update modal to make fields required/optional based on leave type
       const currentView = body.view;
+      
+      // Build updated blocks array, preserving all block properties
       const updatedBlocks = currentView.blocks.map(block => {
         // Make document field required if leave type requires it
         if (block.block_id === 'document_block') {
+          const updatedBlock = { ...block };
           if (requiresDocument) {
-            return {
-              ...block,
-              optional: false,
-              hint: {
-                type: 'plain_text',
-                text: '⚠️ REQUIRED: This leave type requires a supporting document'
-              }
+            updatedBlock.optional = false;
+            updatedBlock.hint = {
+              type: 'plain_text',
+              text: '⚠️ REQUIRED: This leave type requires a supporting document'
             };
           } else {
-            // Keep it optional
-            return {
-              ...block,
-              optional: true,
-              hint: {
-                type: 'plain_text',
-                text: 'Optional: Upload supporting documents if needed'
-              }
+            updatedBlock.optional = true;
+            updatedBlock.hint = {
+              type: 'plain_text',
+              text: 'Optional: Upload supporting documents if needed'
             };
           }
+          console.log(`📝 Updated document_block: optional=${updatedBlock.optional}, requiresDocument=${requiresDocument}`);
+          return updatedBlock;
         }
         
         // Make comment field required if leave type requires it
         if (block.block_id === 'comment_block') {
+          const updatedBlock = { ...block };
           if (requiresComment) {
-            return {
-              ...block,
-              optional: false,
-              hint: {
-                type: 'plain_text',
-                text: '⚠️ REQUIRED: This leave type requires a reason/comment'
-              }
+            updatedBlock.optional = false;
+            updatedBlock.hint = {
+              type: 'plain_text',
+              text: '⚠️ REQUIRED: This leave type requires a reason/comment'
             };
           } else {
-            return {
-              ...block,
-              optional: true,
-              hint: {
-                type: 'plain_text',
-                text: 'Optional: Add any additional details or reason for leave'
-              }
+            updatedBlock.optional = true;
+            updatedBlock.hint = {
+              type: 'plain_text',
+              text: 'Optional: Add any additional details or reason for leave'
             };
           }
+          console.log(`📝 Updated comment_block: optional=${updatedBlock.optional}, requiresComment=${requiresComment}`);
+          return updatedBlock;
         }
         
         // Show/hide on-demand toggle based on leave type support
         if (block.block_id === 'on_demand_block') {
           if (!supportsOnDemand) {
             // Hide the field if not supported
+            console.log(`📝 Hiding on_demand_block: supportsOnDemand=${supportsOnDemand}`);
             return null;
           } else {
             // Show it with hint
-            return {
-              ...block,
-              optional: true,
-              hint: {
-                type: 'plain_text',
-                text: `Available for ${leaveTypeDetails?.name || leaveTypeDetails?.title || 'this'} leave type`
-              }
+            const updatedBlock = { ...block };
+            updatedBlock.optional = true;
+            updatedBlock.hint = {
+              type: 'plain_text',
+              text: `Available for ${leaveTypeDetails?.name || leaveTypeDetails?.title || 'this'} leave type`
             };
+            console.log(`📝 Showing on_demand_block: supportsOnDemand=${supportsOnDemand}`);
+            return updatedBlock;
           }
         }
         
         return block;
       }).filter(block => block !== null); // Remove null blocks (hidden fields)
       
-      // Update the modal view
+      console.log(`📝 Updating modal with ${updatedBlocks.length} blocks`);
+      
+      // Update the modal view - use the exact structure Slack expects
       await client.views.update({
         view_id: viewId,
         view: {
-          ...currentView,
-          blocks: updatedBlocks
+          type: currentView.type,
+          callback_id: currentView.callback_id,
+          title: currentView.title,
+          submit: currentView.submit,
+          close: currentView.close,
+          blocks: updatedBlocks,
+          private_metadata: currentView.private_metadata
         }
       });
       
-      console.log(`✅ Updated modal for leave type: ${leaveTypeDetails?.name || leaveTypeDetails?.title}`);
+      console.log(`✅ Updated modal for leave type: ${leaveTypeDetails?.name || leaveTypeDetails?.title}`, {
+        requiresDocument,
+        supportsOnDemand,
+        requiresComment,
+        blocksUpdated: updatedBlocks.length
+      });
       
     } catch (typeError) {
-      console.error('Error fetching/updating leave type details:', typeError.message);
+      console.error('❌ Error fetching/updating leave type details:', typeError);
+      console.error('Error stack:', typeError.stack);
       // Continue - not critical, modal will still work with default fields
     }
     
@@ -677,29 +728,61 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       leaveTypeDetails = typeDetails;
       leavePolicy = policy;
       
-      // Log full API responses to understand field structure
-      console.log(`✅ Found leave type details:`, JSON.stringify(leaveTypeDetails, null, 2));
+      // Log FULL API responses to understand field structure
+      console.log(`✅ FULL Leave type details:`, JSON.stringify(leaveTypeDetails, null, 2));
       if (leavePolicy) {
-        console.log(`✅ Found leave policy:`, JSON.stringify(leavePolicy, null, 2));
+        console.log(`✅ FULL Leave policy:`, JSON.stringify(leavePolicy, null, 2));
       }
       
-      // Check if document is required (check both leave type and policy)
-      requiresDocument = leaveTypeDetails?.requires_document || 
-                         leaveTypeDetails?.document_required || 
-                         leaveTypeDetails?.requires_attachment ||
-                         leavePolicy?.requires_document ||
-                         leavePolicy?.document_required ||
-                         leavePolicy?.requires_attachment ||
-                         false;
+      // Helper function to check nested properties recursively
+      const hasProperty = (obj, ...paths) => {
+        if (!obj) return false;
+        for (const path of paths) {
+          const parts = path.split('.');
+          let current = obj;
+          for (const part of parts) {
+            if (current === null || current === undefined) break;
+            current = current[part];
+            if (current === null || current === undefined) break;
+          }
+          if (current !== null && current !== undefined && current !== false) {
+            return true;
+          }
+        }
+        return false;
+      };
       
-      // Check if comment/description is required (check both leave type and policy)
-      requiresComment = leaveTypeDetails?.requires_reason || 
-                        leaveTypeDetails?.requires_description || 
-                        leaveTypeDetails?.requires_comment ||
-                        leavePolicy?.requires_reason ||
-                        leavePolicy?.requires_description ||
-                        leavePolicy?.requires_comment ||
-                        false;
+      // Check if document is required (check both leave type and policy, including nested paths)
+      requiresDocument = 
+        leaveTypeDetails?.requires_document || 
+        leaveTypeDetails?.document_required || 
+        leaveTypeDetails?.requires_attachment ||
+        leaveTypeDetails?.document?.required ||
+        leaveTypeDetails?.attachment?.required ||
+        leavePolicy?.requires_document ||
+        leavePolicy?.document_required ||
+        leavePolicy?.requires_attachment ||
+        leavePolicy?.document?.required ||
+        leavePolicy?.attachment?.required ||
+        hasProperty(leaveTypeDetails, 'document_required', 'attachment_required', 'requires_document') ||
+        hasProperty(leavePolicy, 'document_required', 'attachment_required', 'requires_document') ||
+        false;
+      
+      // Check if comment/description is required (check both leave type and policy, including nested paths)
+      requiresComment = 
+        leaveTypeDetails?.requires_reason || 
+        leaveTypeDetails?.requires_description || 
+        leaveTypeDetails?.requires_comment ||
+        leaveTypeDetails?.description?.required ||
+        leaveTypeDetails?.comment?.required ||
+        leavePolicy?.requires_reason ||
+        leavePolicy?.requires_description ||
+        leavePolicy?.requires_comment ||
+        leavePolicy?.description?.required ||
+        leavePolicy?.comment?.required ||
+        hasProperty(leaveTypeDetails, 'description_required', 'comment_required', 'requires_reason') ||
+        hasProperty(leavePolicy, 'description_required', 'comment_required', 'requires_reason') ||
+        false;
       
       console.log(`📋 Leave type settings:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
