@@ -72,9 +72,63 @@ export async function getLeaveTypeById(leaveTypeId) {
       headers: getHeaders(),
     });
     
-    return response.data?.data || response.data;
+    const leaveType = response.data?.data || response.data;
+    console.log(`📋 Leave type API response:`, JSON.stringify(leaveType, null, 2));
+    return leaveType;
   } catch (error) {
     console.error('Error fetching leave type details:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Get leave policies (may contain field requirements per leave type)
+ */
+export async function getLeavePolicies() {
+  try {
+    const response = await axios.get(`${PEOPLEFORCE_API_URL}/leave_policies`, {
+      headers: getHeaders(),
+    });
+    
+    const policies = response.data?.data || response.data || [];
+    console.log(`📋 Leave policies API response:`, JSON.stringify(policies, null, 2));
+    return policies;
+  } catch (error) {
+    console.error('Error fetching leave policies:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Get leave policy for a specific leave type (may contain field requirements)
+ */
+export async function getLeavePolicyByTypeId(leaveTypeId) {
+  try {
+    // First, try to get policies and filter by leave type
+    const policies = await getLeavePolicies();
+    const policy = policies.find(p => p.leave_type_id === parseInt(leaveTypeId));
+    
+    if (policy) {
+      console.log(`📋 Leave policy for type ${leaveTypeId}:`, JSON.stringify(policy, null, 2));
+      return policy;
+    }
+    
+    // If no policy found, try direct endpoint (if it exists)
+    try {
+      const response = await axios.get(`${PEOPLEFORCE_API_URL}/leave_policies?leave_type_id=${leaveTypeId}`, {
+        headers: getHeaders(),
+      });
+      const policyData = response.data?.data || response.data;
+      if (policyData && policyData.length > 0) {
+        return policyData[0];
+      }
+    } catch (directError) {
+      console.warn('Direct leave policy endpoint not available:', directError.message);
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error fetching leave policy:', error.response?.data || error.message);
     throw error;
   }
 }

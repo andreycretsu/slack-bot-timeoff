@@ -6,6 +6,8 @@ import {
   findEmployeeByEmail, 
   getTimeOffTypes, 
   getLeaveTypeById,
+  getLeavePolicies,
+  getLeavePolicyByTypeId,
   createTimeOffRequest 
 } from './peopleforce.js';
 import { startScheduledSync, syncTimeOffsToSlack } from './slackStatusSync.js';
@@ -354,31 +356,53 @@ app.action('leave_type', async ({ ack, body, client }) => {
     
     console.log(`📝 Leave type selected: ${selectedTypeId}`);
     
-    // Get leave type details to check for required/optional fields
+    // Get leave type details AND policy to check for required/optional fields
     try {
-      const leaveTypeDetails = await getLeaveTypeById(parseInt(selectedTypeId));
+      const [leaveTypeDetails, leavePolicy] = await Promise.all([
+        getLeaveTypeById(parseInt(selectedTypeId)),
+        getLeavePolicyByTypeId(selectedTypeId).catch(() => null) // Policy fetch is optional
+      ]);
+      
+      // Log the full API response to see what fields are actually available
+      console.log(`📋 Leave type API response:`, JSON.stringify(leaveTypeDetails, null, 2));
+      if (leavePolicy) {
+        console.log(`📋 Leave policy API response:`, JSON.stringify(leavePolicy, null, 2));
+      }
       
       // Check what fields are required for this leave type
+      // Try multiple possible field names from both leave type and policy
       const requiresDocument = leaveTypeDetails?.requires_document || 
                                leaveTypeDetails?.document_required || 
-                               leaveTypeDetails?.requires_attachment || 
+                               leaveTypeDetails?.requires_attachment ||
+                               leavePolicy?.requires_document ||
+                               leavePolicy?.document_required ||
+                               leavePolicy?.requires_attachment ||
                                false;
       
       const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
                                leaveTypeDetails?.supports_on_demand || 
-                               leaveTypeDetails?.on_demand_enabled || 
+                               leaveTypeDetails?.on_demand_enabled ||
+                               leaveTypeDetails?.on_demand ||
+                               leavePolicy?.allows_on_demand ||
+                               leavePolicy?.supports_on_demand ||
+                               leavePolicy?.on_demand_enabled ||
                                false;
       
       const requiresComment = leaveTypeDetails?.requires_reason || 
                               leaveTypeDetails?.requires_description || 
-                              leaveTypeDetails?.requires_comment || 
+                              leaveTypeDetails?.requires_comment ||
+                              leavePolicy?.requires_reason ||
+                              leavePolicy?.requires_description ||
+                              leavePolicy?.requires_comment ||
                               false;
       
-      console.log(`📋 Leave type details:`, {
+      console.log(`📋 Parsed leave type settings:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
         requiresDocument,
         supportsOnDemand,
-        requiresComment
+        requiresComment,
+        allFields: Object.keys(leaveTypeDetails || {}),
+        policyFields: Object.keys(leavePolicy || {})
       });
       
       // Update modal to make fields required/optional based on leave type
