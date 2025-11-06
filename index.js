@@ -190,21 +190,20 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
           initial_date: new Date().toISOString().split('T')[0],
         },
       },
-    ];
-    
-    // Add comment/reason field (always available)
-    blocks.push({
-      type: 'input',
-      block_id: 'comment_block',
-      label: { type: 'plain_text', text: 'Reason/Comment' },
-      optional: true,
-      element: {
-        type: 'plain_text_input',
-        action_id: 'comment',
-        multiline: true,
-        placeholder: { type: 'plain_text', text: 'Add any additional details...' },
+      {
+        type: 'input',
+        block_id: 'comment_block',
+        label: { type: 'plain_text', text: 'Reason/Comment' },
+        hint: { type: 'plain_text', text: 'Required for some leave types based on your policy' },
+        optional: true,
+        element: {
+          type: 'plain_text_input',
+          action_id: 'comment',
+          multiline: true,
+          placeholder: { type: 'plain_text', text: 'Add any additional details or reason for leave...' },
+        },
       },
-    });
+    ];
     
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -239,6 +238,17 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
 });
 
 /**
+ * Handle leave type selection change (dynamic field updates)
+ * Note: This would require views.update but Slack modals are mostly static
+ * For now, we'll handle all fields in the submission
+ */
+app.action('leave_type', async ({ ack, body, client }) => {
+  await ack();
+  // Note: Could update modal here with views.update if needed in future
+  // For now, all fields are shown upfront
+});
+
+/**
  * Handle modal submission
  */
 app.view('timeoff_request', async ({ ack, view, body, client }) => {
@@ -246,10 +256,18 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     await ack();
   
     const slackUserId = body.user.id;
-  const leaveTypeId = view.state.values.type_block.leave_type.selected_option.value;
-  const startDate = view.state.values.start_block.start_date.selected_date;
-  const endDate = view.state.values.end_block.end_date.selected_date;
-  const comment = view.state.values.comment_block?.comment?.value || '';
+    const leaveTypeId = view.state.values.type_block.leave_type.selected_option.value;
+    const startDate = view.state.values.start_block.start_date.selected_date;
+    const endDate = view.state.values.end_block.end_date.selected_date;
+    const comment = view.state.values.comment_block?.comment?.value || '';
+  
+    console.log(`📝 Processing time-off request:`, {
+      userId: slackUserId,
+      leaveTypeId,
+      startDate,
+      endDate,
+      hasComment: !!comment
+    });
   
   try {
     // Get Slack user info to get email
