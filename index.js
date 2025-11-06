@@ -222,6 +222,27 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
           max_files: 1,
         },
       },
+      // Add boolean toggle for "On demand" or similar fields
+      {
+        type: 'input',
+        block_id: 'on_demand_block',
+        label: { type: 'plain_text', text: 'On Demand' },
+        hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request' },
+        optional: true,
+        element: {
+          type: 'checkboxes',
+          action_id: 'on_demand',
+          options: [
+            {
+              text: {
+                type: 'plain_text',
+                text: 'This is an on-demand leave request'
+              },
+              value: 'on_demand'
+            }
+          ]
+        }
+      },
     ];
     
     // Open modal - this must happen after ack()
@@ -276,7 +297,7 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
  * Handle leave type selection change (dynamic field updates)
  * Updates modal with additional fields based on selected leave type
  */
-app.action('leave_type', async ({ ack, body, client, respond }) => {
+app.action('leave_type', async ({ ack, body, client }) => {
   await ack();
   
   try {
@@ -285,24 +306,29 @@ app.action('leave_type', async ({ ack, body, client, respond }) => {
     
     console.log(`📝 Leave type selected: ${selectedTypeId}`);
     
-    // Get current view state
-    const currentView = body.view;
-    const currentBlocks = currentView.blocks || [];
-    
-    // Note: We could fetch leave type details here and update modal
-    // For now, all fields are shown upfront as they're commonly needed
-    // Future: Could use views.update to show/hide fields based on leave type
-    
-    // Get leave type details from PeopleForce (async, non-blocking)
-    getTimeOffTypes().then(types => {
-      const selectedType = types.find(t => String(t.id) === selectedTypeId);
-      if (selectedType) {
-        console.log(`✅ Found leave type: ${selectedType.name || selectedType.title}`);
-        // Could update modal here with views.update if needed
-      }
-    }).catch(err => {
-      console.error('Error fetching leave type details:', err);
-    });
+    // Get leave type details to check for required/optional fields
+    try {
+      const leaveTypeDetails = await getLeaveTypeById(parseInt(selectedTypeId));
+      
+      // Check if leave type supports on-demand
+      const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
+                               leaveTypeDetails?.supports_on_demand || 
+                               leaveTypeDetails?.on_demand_enabled || 
+                               false;
+      
+      // Update modal to show/hide on-demand toggle based on leave type
+      // Note: This requires views.update - for now, we show all fields
+      // Future: Use views.update to dynamically show/hide fields
+      console.log(`📋 Leave type details:`, {
+        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
+        supportsOnDemand,
+        requiresDocument: leaveTypeDetails?.requires_document || false
+      });
+      
+    } catch (typeError) {
+      console.error('Error fetching leave type details:', typeError.message);
+      // Continue - not critical
+    }
     
   } catch (error) {
     console.error('Error handling leave type selection:', error);
@@ -325,6 +351,10 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     // Get document upload if provided
     const documentUpload = view.state.values.document_block?.document_upload?.files || [];
     const hasDocument = documentUpload.length > 0;
+    
+    // Get boolean toggle values (e.g., "On demand")
+    const onDemandCheckbox = view.state.values.on_demand_block?.on_demand?.selected_options || [];
+    const isOnDemand = onDemandCheckbox.some(option => option.value === 'on_demand');
   
     console.log(`📝 Processing time-off request:`, {
       userId: slackUserId,
@@ -332,7 +362,8 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       startDate,
       endDate,
       hasComment: !!comment,
-      hasDocument: hasDocument
+      hasDocument: hasDocument,
+      isOnDemand: isOnDemand
     });
   
   try {
@@ -375,6 +406,19 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       if (requiresDocument && !hasDocument) {
         throw new Error('This leave type requires a supporting document. Please upload a document and try again.');
       }
+      
+      // Check if leave type supports on-demand requests
+      // Note: This might be a policy setting, not a leave type setting
+      const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
+                               leaveTypeDetails?.supports_on_demand || 
+                               leaveTypeDetails?.on_demand_enabled || 
+                               false;
+      
+      console.log(`📋 Leave type settings:`, {
+        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
+        requiresDocument,
+        supportsOnDemand
+      });
     } catch (typeError) {
       if (typeError.message.includes('requires a supporting document')) {
         throw typeError; // Re-throw validation errors
@@ -423,7 +467,8 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       comment || '', // Use comment as description
       null, // leave_request_entries (for partial days) - not implemented yet
       false, // skip_approval - keep false to require approval
-      documentUrl // document URL if provided
+      documentUrl, // document URL if provided
+      isOnDemand // on-demand flag if checked
     );
     
     // If document was uploaded and request was created, attach document

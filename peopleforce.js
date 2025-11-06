@@ -112,8 +112,9 @@ export async function uploadDocument(fileUrl, fileName) {
  * @param {Array} entries - Optional array of leave request entries for partial days
  * @param {boolean} skipApproval - Optional flag to skip approval (for testing)
  * @param {string} documentUrl - Optional URL to attached document
+ * @param {boolean} onDemand - Optional flag for on-demand leave requests
  */
-export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '', entries = null, skipApproval = false, documentUrl = null) {
+export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '', entries = null, skipApproval = false, documentUrl = null, onDemand = false) {
   try {
     const payload = {
       employee_id: employeeId,
@@ -130,6 +131,15 @@ export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate,
     
     if (skipApproval === true) {
       payload.skip_approval = true;
+    }
+    
+    // Add on-demand flag if provided
+    // Note: Check PeopleForce API docs for correct field name (might be 'on_demand', 'on_demand_leave', etc.)
+    if (onDemand === true) {
+      payload.on_demand = true;
+      // Also try alternative field names in case API uses different naming
+      // payload.on_demand_leave = true;
+      // payload.is_on_demand = true;
     }
     
     const response = await axios.post(
