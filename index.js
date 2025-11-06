@@ -115,64 +115,54 @@ async function initialize() {
 /**
  * Slash command /request-time-off - Opens modal to request time off
  */
-app.command('/request-time-off', async ({ ack, body, client }) => {
-  // Acknowledge immediately to prevent timeout
+app.command('/request-time-off', async ({ ack, body, client, respond }) => {
+  console.log(`📝 Received /request-time-off from user ${body.user_id}`);
+  
+  // CRITICAL: Acknowledge immediately to prevent dispatch_failed
   try {
     await ack();
+    console.log(`✅ Command acknowledged for user ${body.user_id}`);
   } catch (ackError) {
-    console.error('Error acknowledging command:', ackError);
+    console.error('❌ CRITICAL: Error acknowledging command:', ackError);
+    console.error('Ack error details:', {
+      message: ackError.message,
+      code: ackError.code,
+      data: ackError.data
+    });
+    // Try to respond with error message
+    try {
+      await respond({
+        response_type: 'ephemeral',
+        text: `❌ Error: Could not process command. Please try again or contact support.`
+      });
+    } catch (respondError) {
+      console.error('Error responding:', respondError);
+    }
     return;
   }
   
-  console.log(`📝 Received /request-time-off from user ${body.user_id}`);
-  
+  // Now handle the command (after ack)
   try {
-    // Fetch time-off types from PeopleForce (with timeout protection)
-    let timeOffTypes = [];
-    let typeOptions = [];
+    // Use default options immediately (don't wait for API)
+    let typeOptions = [
+      { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
+      { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
+      { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
+      { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
+    ];
     
-    try {
-      // Fetch with 3 second timeout
-      timeOffTypes = await Promise.race([
-        getTimeOffTypes(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout fetching time-off types')), 3000)
-        )
-      ]);
-      
+    // Try to fetch time-off types from PeopleForce in background (non-blocking)
+    getTimeOffTypes().then(timeOffTypes => {
       if (timeOffTypes && timeOffTypes.length > 0) {
-        console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce`);
-        
-        // Build options from PeopleForce leave types
-        typeOptions = timeOffTypes.map(type => ({
-          text: {
-            type: 'plain_text',
-            text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
-          },
-          value: String(type.id),
-          description: type.description ? {
-            type: 'plain_text',
-            text: type.description.substring(0, 75) // Limit description length
-          } : undefined,
-        }));
+        console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce (background)`);
+        // Note: Modal already opened with defaults, but we have the types for future use
       }
-    } catch (fetchError) {
-      console.error('Error fetching time-off types:', fetchError);
-      // Continue with default options if fetch fails
-    }
+    }).catch(fetchError => {
+      console.error('Error fetching time-off types (non-blocking):', fetchError.message);
+      // Ignore - we already have default options
+    });
     
-    // If no types found or fetch failed, use default options
-    if (typeOptions.length === 0) {
-      typeOptions = [
-        { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
-        { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
-        { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
-        { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
-      ];
-      console.log('⚠️  Using default leave types (PeopleForce API unavailable)');
-    }
-    
-    // Build modal blocks - base fields that are always needed
+    // Build modal blocks
     const blocks = [
       {
         type: 'input',
@@ -220,6 +210,11 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
       },
     ];
     
+    // Open modal - this must happen after ack()
+    if (!body.trigger_id) {
+      throw new Error('Missing trigger_id in request body');
+    }
+    
     await client.views.open({
       trigger_id: body.trigger_id,
       view: {
@@ -232,15 +227,17 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
       },
     });
     
-    console.log(`✅ Opened time-off modal with ${typeOptions.length} leave type(s) for user ${body.user_id}`);
+    console.log(`✅ Opened time-off modal for user ${body.user_id}`);
   } catch (error) {
-    console.error('Error opening time-off modal:', error);
+    console.error('❌ Error opening time-off modal:', error);
     console.error('Error details:', {
       message: error.message,
       code: error.code,
-      data: error.data
+      data: error.data,
+      stack: error.stack
     });
     
+    // Try to send error message to user
     try {
       await client.chat.postMessage({
         channel: body.user_id,
@@ -248,6 +245,15 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
       });
     } catch (msgError) {
       console.error('Error sending error message:', msgError);
+      // Last resort: try respond()
+      try {
+        await respond({
+          response_type: 'ephemeral',
+          text: `❌ Error: ${error.message}`
+        });
+      } catch (respondError) {
+        console.error('Error responding:', respondError);
+      }
     }
   }
 });
