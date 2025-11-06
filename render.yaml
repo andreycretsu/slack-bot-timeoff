@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: slack-peopleforce-bot
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_USER_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: PEOPLEFORCE_API_KEY
+        sync: false
+      - key: PEOPLEFORCE_API_URL
+        sync: false
+      - key: PORT
+        value: 10000
+

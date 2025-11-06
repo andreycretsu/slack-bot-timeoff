@@ -101,9 +101,8 @@ async function initialize() {
  * Slash command /request-time-off - Opens modal to request time off
  */
 app.command('/request-time-off', async ({ ack, body, client }) => {
-  await ack();
-  
   try {
+    await ack();
     // Fetch time-off types from PeopleForce
     const timeOffTypes = await getTimeOffTypes();
     
@@ -193,9 +192,10 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
  * Handle modal submission
  */
 app.view('timeoff_request', async ({ ack, view, body, client }) => {
-  await ack();
+  try {
+    await ack();
   
-  const slackUserId = body.user.id;
+    const slackUserId = body.user.id;
   const leaveTypeId = view.state.values.type_block.leave_type.selected_option.value;
   const startDate = view.state.values.start_block.start_date.selected_date;
   const endDate = view.state.values.end_block.end_date.selected_date;
@@ -253,10 +253,14 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
   } catch (error) {
     console.error('Error creating time-off request:', error);
     
-    await client.chat.postMessage({
-      channel: slackUserId,
-      text: `❌ *Failed to create time-off request*\n\n${error.message}\n\nPlease try again or contact your administrator.`,
-    });
+    try {
+      await client.chat.postMessage({
+        channel: slackUserId,
+        text: `❌ *Failed to create time-off request*\n\n${error.message}\n\nPlease try again or contact your administrator.`,
+      });
+    } catch (msgError) {
+      console.error('Error sending error message:', msgError);
+    }
   }
 });
 
@@ -277,9 +281,8 @@ function getEmojiForType(typeName) {
  * Manual sync command (for admins/testing)
  */
 app.command('/sync-statuses', async ({ ack, body, client }) => {
-  await ack();
-  
   try {
+    await ack();
     await client.chat.postMessage({
       channel: body.user_id,
       text: '🔄 Starting manual sync...',
