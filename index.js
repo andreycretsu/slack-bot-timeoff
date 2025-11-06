@@ -231,57 +231,18 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
       },
     ];
     
-    // Add comment/reason field (always shown, but may be required for some types)
+    // Add comment/reason field (optional - API will validate if required)
     blocks.push({
       type: 'input',
       block_id: 'comment_block',
       label: { type: 'plain_text', text: 'Reason/Comment' },
-      hint: { type: 'plain_text', text: 'Required for some leave types based on your policy' },
-      optional: true, // Will be made required dynamically based on leave type
+      optional: true,
       element: {
         type: 'plain_text_input',
         action_id: 'comment',
         multiline: true,
         placeholder: { type: 'plain_text', text: 'Add any additional details or reason for leave...' },
       },
-    });
-    
-    // Add document upload field (ALWAYS shown - will be made required dynamically based on leave type)
-    blocks.push({
-      type: 'input',
-      block_id: 'document_block',
-      label: { type: 'plain_text', text: 'Supporting Document' },
-      hint: { type: 'plain_text', text: 'Upload supporting documents (e.g., medical certificate, proof of leave). Required for some leave types.' },
-      optional: true, // Will be made required dynamically based on leave type selection
-      element: {
-        type: 'file_input',
-        action_id: 'document_upload',
-        filetypes: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'],
-        max_files: 1,
-      },
-    });
-    
-    // Add on-demand toggle (ALWAYS shown - will be shown/hidden dynamically based on leave type)
-    // Always show it initially - will be hidden if leave type doesn't support it
-    blocks.push({
-      type: 'input',
-      block_id: 'on_demand_block',
-      label: { type: 'plain_text', text: 'On Demand' },
-      hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request (available for some leave types)' },
-      optional: true,
-      element: {
-        type: 'checkboxes',
-        action_id: 'on_demand',
-        options: [
-          {
-            text: {
-              type: 'plain_text',
-              text: 'This is an on-demand leave request'
-            },
-            value: 'on_demand'
-          }
-        ]
-      }
     });
     
     // Open modal - this must happen after ack()
@@ -333,208 +294,13 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
 });
 
 /**
- * Handle leave type selection change (dynamic field updates)
- * Updates modal to show/hide required fields based on selected leave type
+ * Handle leave type selection change
+ * NOTE: PeopleForce API doesn't return field requirements, so we just log the selection
  */
 app.action('leave_type', async ({ ack, body, client }) => {
   await ack();
-  
-  try {
-    const selectedTypeId = body.actions[0].selected_option.value;
-    const viewId = body.view.id;
-    
-    console.log(`📝 Leave type selected: ${selectedTypeId}`);
-    
-    // Get leave type details AND policy to check for required/optional fields
-    try {
-      const [leaveTypeDetails, leavePolicy] = await Promise.all([
-        getLeaveTypeById(parseInt(selectedTypeId)),
-        getLeavePolicyByTypeId(selectedTypeId).catch(() => null) // Policy fetch is optional
-      ]);
-      
-      // Log the FULL API response including nested objects to see ALL available fields
-      console.log(`📋 FULL Leave type API response:`, JSON.stringify(leaveTypeDetails, null, 2));
-      if (leavePolicy) {
-        console.log(`📋 FULL Leave policy API response:`, JSON.stringify(leavePolicy, null, 2));
-      }
-      
-      // Helper function to check nested properties recursively
-      const hasProperty = (obj, ...paths) => {
-        if (!obj) return false;
-        for (const path of paths) {
-          const parts = path.split('.');
-          let current = obj;
-          for (const part of parts) {
-            if (current === null || current === undefined) break;
-            current = current[part];
-            if (current === null || current === undefined) break;
-          }
-          if (current !== null && current !== undefined && current !== false) {
-            return true;
-          }
-        }
-        return false;
-      };
-      
-      // Check what fields are required for this leave type
-      // Try multiple possible field names from both leave type and policy, including nested paths
-      const requiresDocument = 
-        leaveTypeDetails?.requires_document || 
-        leaveTypeDetails?.document_required || 
-        leaveTypeDetails?.requires_attachment ||
-        leaveTypeDetails?.document?.required ||
-        leaveTypeDetails?.attachment?.required ||
-        leavePolicy?.requires_document ||
-        leavePolicy?.document_required ||
-        leavePolicy?.requires_attachment ||
-        leavePolicy?.document?.required ||
-        leavePolicy?.attachment?.required ||
-        hasProperty(leaveTypeDetails, 'document_required', 'attachment_required', 'requires_document') ||
-        hasProperty(leavePolicy, 'document_required', 'attachment_required', 'requires_document') ||
-        false;
-      
-      const supportsOnDemand = 
-        leaveTypeDetails?.allows_on_demand || 
-        leaveTypeDetails?.supports_on_demand || 
-        leaveTypeDetails?.on_demand_enabled ||
-        leaveTypeDetails?.on_demand ||
-        leaveTypeDetails?.on_demand?.allowed ||
-        leaveTypeDetails?.on_demand?.enabled ||
-        leavePolicy?.allows_on_demand ||
-        leavePolicy?.supports_on_demand ||
-        leavePolicy?.on_demand_enabled ||
-        leavePolicy?.on_demand ||
-        leavePolicy?.on_demand?.allowed ||
-        leavePolicy?.on_demand?.enabled ||
-        hasProperty(leaveTypeDetails, 'on_demand.enabled', 'on_demand.allowed', 'allows_on_demand') ||
-        hasProperty(leavePolicy, 'on_demand.enabled', 'on_demand.allowed', 'allows_on_demand') ||
-        false;
-      
-      const requiresComment = 
-        leaveTypeDetails?.requires_reason || 
-        leaveTypeDetails?.requires_description || 
-        leaveTypeDetails?.requires_comment ||
-        leaveTypeDetails?.description?.required ||
-        leaveTypeDetails?.comment?.required ||
-        leavePolicy?.requires_reason ||
-        leavePolicy?.requires_description ||
-        leavePolicy?.requires_comment ||
-        leavePolicy?.description?.required ||
-        leavePolicy?.comment?.required ||
-        hasProperty(leaveTypeDetails, 'description_required', 'comment_required', 'requires_reason') ||
-        hasProperty(leavePolicy, 'description_required', 'comment_required', 'requires_reason') ||
-        false;
-      
-      console.log(`📋 Parsed leave type settings:`, {
-        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
-        requiresDocument,
-        supportsOnDemand,
-        requiresComment,
-        allLeaveTypeFields: Object.keys(leaveTypeDetails || {}),
-        allPolicyFields: Object.keys(leavePolicy || {}),
-        leaveTypeFull: leaveTypeDetails,
-        policyFull: leavePolicy
-      });
-      
-      // Update modal to make fields required/optional based on leave type
-      const currentView = body.view;
-      
-      // Build updated blocks array, preserving all block properties
-      const updatedBlocks = currentView.blocks.map(block => {
-        // Make document field required if leave type requires it
-        if (block.block_id === 'document_block') {
-          const updatedBlock = { ...block };
-          if (requiresDocument) {
-            updatedBlock.optional = false;
-            updatedBlock.hint = {
-              type: 'plain_text',
-              text: '⚠️ REQUIRED: This leave type requires a supporting document'
-            };
-          } else {
-            updatedBlock.optional = true;
-            updatedBlock.hint = {
-              type: 'plain_text',
-              text: 'Optional: Upload supporting documents if needed'
-            };
-          }
-          console.log(`📝 Updated document_block: optional=${updatedBlock.optional}, requiresDocument=${requiresDocument}`);
-          return updatedBlock;
-        }
-        
-        // Make comment field required if leave type requires it
-        if (block.block_id === 'comment_block') {
-          const updatedBlock = { ...block };
-          if (requiresComment) {
-            updatedBlock.optional = false;
-            updatedBlock.hint = {
-              type: 'plain_text',
-              text: '⚠️ REQUIRED: This leave type requires a reason/comment'
-            };
-          } else {
-            updatedBlock.optional = true;
-            updatedBlock.hint = {
-              type: 'plain_text',
-              text: 'Optional: Add any additional details or reason for leave'
-            };
-          }
-          console.log(`📝 Updated comment_block: optional=${updatedBlock.optional}, requiresComment=${requiresComment}`);
-          return updatedBlock;
-        }
-        
-        // Show/hide on-demand toggle based on leave type support
-        if (block.block_id === 'on_demand_block') {
-          if (!supportsOnDemand) {
-            // Hide the field if not supported
-            console.log(`📝 Hiding on_demand_block: supportsOnDemand=${supportsOnDemand}`);
-            return null;
-          } else {
-            // Show it with hint
-            const updatedBlock = { ...block };
-            updatedBlock.optional = true;
-            updatedBlock.hint = {
-              type: 'plain_text',
-              text: `Available for ${leaveTypeDetails?.name || leaveTypeDetails?.title || 'this'} leave type`
-            };
-            console.log(`📝 Showing on_demand_block: supportsOnDemand=${supportsOnDemand}`);
-            return updatedBlock;
-          }
-        }
-        
-        return block;
-      }).filter(block => block !== null); // Remove null blocks (hidden fields)
-      
-      console.log(`📝 Updating modal with ${updatedBlocks.length} blocks`);
-      
-      // Update the modal view - use the exact structure Slack expects
-      await client.views.update({
-        view_id: viewId,
-        view: {
-          type: currentView.type,
-          callback_id: currentView.callback_id,
-          title: currentView.title,
-          submit: currentView.submit,
-          close: currentView.close,
-          blocks: updatedBlocks,
-          private_metadata: currentView.private_metadata
-        }
-      });
-      
-      console.log(`✅ Updated modal for leave type: ${leaveTypeDetails?.name || leaveTypeDetails?.title}`, {
-        requiresDocument,
-        supportsOnDemand,
-        requiresComment,
-        blocksUpdated: updatedBlocks.length
-      });
-      
-    } catch (typeError) {
-      console.error('❌ Error fetching/updating leave type details:', typeError);
-      console.error('Error stack:', typeError.stack);
-      // Continue - not critical, modal will still work with default fields
-    }
-    
-  } catch (error) {
-    console.error('Error handling leave type selection:', error);
-  }
+  const selectedTypeId = body.actions[0].selected_option.value;
+  console.log(`📝 Leave type selected: ${selectedTypeId}`);
 });
 
 /**
@@ -671,14 +437,6 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     const startDate = view.state.values.start_block.start_date.selected_date;
     const endDate = view.state.values.end_block.end_date.selected_date;
     const comment = view.state.values.comment_block?.comment?.value || '';
-    
-    // Get document upload if provided
-    const documentUpload = view.state.values.document_block?.document_upload?.files || [];
-    const hasDocument = documentUpload.length > 0;
-    
-    // Get boolean toggle values (e.g., "On demand")
-    const onDemandCheckbox = view.state.values.on_demand_block?.on_demand?.selected_options || [];
-    const isOnDemand = onDemandCheckbox.some(option => option.value === 'on_demand');
   
     // Validate dates BEFORE processing
     if (endDate < startDate) {
@@ -690,9 +448,7 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       leaveTypeId,
       startDate,
       endDate,
-      hasComment: !!comment,
-      hasDocument: hasDocument,
-      isOnDemand: isOnDemand
+      hasComment: !!comment
     });
   
     // Get Slack user info to get email
@@ -713,135 +469,9 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     // Store mapping for future use
     userEmailMap[email.toLowerCase()] = slackUserId;
     
-    // Get leave type details AND policy to check for required fields
-    let leaveTypeDetails = null;
-    let leavePolicy = null;
-    let requiresDocument = false;
-    let requiresComment = false;
-    
-    try {
-      const [typeDetails, policy] = await Promise.all([
-        getLeaveTypeById(parseInt(leaveTypeId)),
-        getLeavePolicyByTypeId(leaveTypeId).catch(() => null) // Policy fetch is optional
-      ]);
-      
-      leaveTypeDetails = typeDetails;
-      leavePolicy = policy;
-      
-      // Log FULL API responses to understand field structure
-      console.log(`✅ FULL Leave type details:`, JSON.stringify(leaveTypeDetails, null, 2));
-      if (leavePolicy) {
-        console.log(`✅ FULL Leave policy:`, JSON.stringify(leavePolicy, null, 2));
-      }
-      
-      // Helper function to check nested properties recursively
-      const hasProperty = (obj, ...paths) => {
-        if (!obj) return false;
-        for (const path of paths) {
-          const parts = path.split('.');
-          let current = obj;
-          for (const part of parts) {
-            if (current === null || current === undefined) break;
-            current = current[part];
-            if (current === null || current === undefined) break;
-          }
-          if (current !== null && current !== undefined && current !== false) {
-            return true;
-          }
-        }
-        return false;
-      };
-      
-      // Check if document is required (check both leave type and policy, including nested paths)
-      requiresDocument = 
-        leaveTypeDetails?.requires_document || 
-        leaveTypeDetails?.document_required || 
-        leaveTypeDetails?.requires_attachment ||
-        leaveTypeDetails?.document?.required ||
-        leaveTypeDetails?.attachment?.required ||
-        leavePolicy?.requires_document ||
-        leavePolicy?.document_required ||
-        leavePolicy?.requires_attachment ||
-        leavePolicy?.document?.required ||
-        leavePolicy?.attachment?.required ||
-        hasProperty(leaveTypeDetails, 'document_required', 'attachment_required', 'requires_document') ||
-        hasProperty(leavePolicy, 'document_required', 'attachment_required', 'requires_document') ||
-        false;
-      
-      // Check if comment/description is required (check both leave type and policy, including nested paths)
-      requiresComment = 
-        leaveTypeDetails?.requires_reason || 
-        leaveTypeDetails?.requires_description || 
-        leaveTypeDetails?.requires_comment ||
-        leaveTypeDetails?.description?.required ||
-        leaveTypeDetails?.comment?.required ||
-        leavePolicy?.requires_reason ||
-        leavePolicy?.requires_description ||
-        leavePolicy?.requires_comment ||
-        leavePolicy?.description?.required ||
-        leavePolicy?.comment?.required ||
-        hasProperty(leaveTypeDetails, 'description_required', 'comment_required', 'requires_reason') ||
-        hasProperty(leavePolicy, 'description_required', 'comment_required', 'requires_reason') ||
-        false;
-      
-      console.log(`📋 Leave type settings:`, {
-        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
-        requiresDocument,
-        requiresComment,
-        allLeaveTypeFields: Object.keys(leaveTypeDetails || {}),
-        allPolicyFields: Object.keys(leavePolicy || {})
-      });
-      
-      // Validate required fields
-      if (requiresDocument && !hasDocument) {
-        throw new Error('⚠️ This leave type requires a supporting document. Please upload a document and try again.');
-      }
-      
-      if (requiresComment && !comment.trim()) {
-        throw new Error('⚠️ This leave type requires a reason/comment. Please provide a reason for your leave request.');
-      }
-      
-    } catch (typeError) {
-      // Re-throw validation errors (required document/comment)
-      if (typeError.message.includes('requires') || typeError.message.includes('⚠️')) {
-        throw typeError;
-      }
-      console.warn('Could not fetch leave type details:', typeError.message);
-      // Continue anyway - not critical if we can't fetch details
-    }
-    
-    // Handle document upload if provided
-    let documentUrl = null;
-    if (hasDocument) {
-      try {
-        const fileId = documentUpload[0].id;
-        console.log(`📎 Processing document upload: ${fileId}`);
-        
-        // Get file info from Slack
-        const fileInfo = await client.files.info({ file: fileId });
-        const fileUrl = fileInfo.file.url_private;
-        
-        // Download file from Slack
-        const fileResponse = await client.files.sharedPublicURL({ file: fileId }).catch(() => {
-          // If file is private, we need to download it using the bot token
-          // For now, just store the URL - PeopleForce API might accept file URLs
-          return { file: { permalink_public: fileUrl } };
-        });
-        
-        documentUrl = fileInfo.file.url_private || fileInfo.file.permalink_public;
-        console.log(`✅ Document processed: ${documentUrl}`);
-        
-        // Note: You'll need to upload this to PeopleForce API
-        // Check PeopleForce API docs for document upload endpoint
-      } catch (fileError) {
-        console.error('Error processing document:', fileError);
-        // Don't fail the request if document processing fails
-        // Just log it and continue
-      }
-    }
-    
     // Create time-off request
     // Note: API uses 'description' field, not 'reason'
+    // PeopleForce API will validate required fields and return errors if needed
     const timeOff = await createTimeOffRequest(
       employee.id,
       parseInt(leaveTypeId),
@@ -850,21 +480,9 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
       comment || '', // Use comment as description
       null, // leave_request_entries (for partial days) - not implemented yet
       false, // skip_approval - keep false to require approval
-      documentUrl, // document URL if provided
-      isOnDemand // on-demand flag if checked
+      null, // document URL - not supported by API currently
+      false // on-demand flag - not supported by API currently
     );
-    
-    // If document was uploaded and request was created, attach document
-    if (hasDocument && documentUrl && timeOff.id) {
-      try {
-        // TODO: Upload document to PeopleForce after request is created
-        // This depends on PeopleForce API - check docs for document attachment endpoint
-        console.log(`📎 Document uploaded: ${documentUrl} - TODO: Attach to leave request ${timeOff.id}`);
-      } catch (docError) {
-        console.error('Error attaching document to leave request:', docError);
-        // Don't fail the request if document attachment fails
-      }
-    }
     
     // Format response message
     const startDateFormatted = new Date(startDate).toLocaleDateString('en-US', { 
