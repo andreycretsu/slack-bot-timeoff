@@ -102,43 +102,35 @@ async function initialize() {
  */
 app.command('/request-time-off', async ({ ack, body, client }) => {
   // Acknowledge immediately to prevent timeout
-  await ack();
+  try {
+    await ack();
+  } catch (ackError) {
+    console.error('Error acknowledging command:', ackError);
+    return;
+  }
+  
+  console.log(`📝 Received /request-time-off from user ${body.user_id}`);
+  
+  // Use default options immediately (don't wait for PeopleForce API)
+  const typeOptions = [
+    { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
+    { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
+    { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
+    { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
+  ];
+  
+  // Try to fetch time-off types from PeopleForce in background (non-blocking)
+  getTimeOffTypes().then(timeOffTypes => {
+    if (timeOffTypes && timeOffTypes.length > 0) {
+      console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce`);
+      // Note: In future, we could update the modal dynamically with these types
+    }
+  }).catch(fetchError => {
+    console.error('Error fetching time-off types (non-blocking):', fetchError);
+    // Ignore - we already have default options
+  });
   
   try {
-    // Fetch time-off types from PeopleForce (with timeout handling)
-    let timeOffTypes = [];
-    try {
-      timeOffTypes = await Promise.race([
-        getTimeOffTypes(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout fetching time-off types')), 5000)
-        )
-      ]);
-    } catch (fetchError) {
-      console.error('Error fetching time-off types:', fetchError);
-      // Continue with default options if fetch fails
-    }
-    
-    // Build options for the dropdown
-    let typeOptions = [];
-    if (timeOffTypes && timeOffTypes.length > 0) {
-      typeOptions = timeOffTypes.map(type => ({
-        text: {
-          type: 'plain_text',
-          text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
-        },
-        value: String(type.id),
-      }));
-    }
-    
-    // If no types found, use default options
-    if (typeOptions.length === 0) {
-      typeOptions = [
-        { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
-        { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
-        { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' }
-      ];
-    }
     
     await client.views.open({
       trigger_id: body.trigger_id,
