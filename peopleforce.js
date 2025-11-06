@@ -64,19 +64,53 @@ export async function getTimeOffTypes() {
 }
 
 /**
- * Create a time-off request in PeopleForce
+ * Get a specific leave type by ID (to check required fields)
  */
-export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '') {
+export async function getLeaveTypeById(leaveTypeId) {
   try {
+    const response = await axios.get(`${PEOPLEFORCE_API_URL}/leave_types/${leaveTypeId}`, {
+      headers: getHeaders(),
+    });
+    
+    return response.data?.data || response.data;
+  } catch (error) {
+    console.error('Error fetching leave type details:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Create a time-off request in PeopleForce
+ * @param {number} employeeId - Employee ID
+ * @param {number} timeOffTypeId - Leave type ID
+ * @param {string} startDate - Start date (YYYY-MM-DD)
+ * @param {string} endDate - End date (YYYY-MM-DD)
+ * @param {string} description - Reason/description for leave
+ * @param {Array} entries - Optional array of leave request entries for partial days
+ * @param {boolean} skipApproval - Optional flag to skip approval (for testing)
+ */
+export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate, endDate, description = '', entries = null, skipApproval = false) {
+  try {
+    const payload = {
+      employee_id: employeeId,
+      leave_type_id: timeOffTypeId,
+      starts_on: startDate,
+      ends_on: endDate,
+      description: description, // Note: API uses 'description', not 'reason'
+    };
+    
+    // Add optional fields if provided
+    if (entries && Array.isArray(entries) && entries.length > 0) {
+      payload.leave_request_entries = entries;
+    }
+    
+    if (skipApproval === true) {
+      payload.skip_approval = true;
+    }
+    
     const response = await axios.post(
       `${PEOPLEFORCE_API_URL}/leave_requests`,
-      {
-        employee_id: employeeId,
-        leave_type_id: timeOffTypeId,
-        starts_on: startDate,
-        ends_on: endDate,
-        reason: description,
-      },
+      payload,
       {
         headers: getHeaders(),
       }
@@ -85,6 +119,9 @@ export async function createTimeOffRequest(employeeId, timeOffTypeId, startDate,
     return response.data?.data || response.data;
   } catch (error) {
     console.error('Error creating time-off request:', error.response?.data || error.message);
+    if (error.response?.data) {
+      console.error('API Error Details:', JSON.stringify(error.response.data, null, 2));
+    }
     throw error;
   }
 }

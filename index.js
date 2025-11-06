@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { 
   findEmployeeByEmail, 
   getTimeOffTypes, 
+  getLeaveTypeById,
   createTimeOffRequest 
 } from './peopleforce.js';
 import { startScheduledSync, syncTimeOffsToSlack } from './slackStatusSync.js';
@@ -314,13 +315,29 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     // Store mapping for future use
     userEmailMap[email.toLowerCase()] = slackUserId;
     
+    // Get leave type details to check for required fields (optional)
+    let leaveTypeDetails = null;
+    try {
+      leaveTypeDetails = await getLeaveTypeById(parseInt(leaveTypeId));
+      console.log(`✅ Found leave type details:`, {
+        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
+        id: leaveTypeDetails?.id
+      });
+    } catch (typeError) {
+      console.warn('Could not fetch leave type details:', typeError.message);
+      // Continue anyway - not critical
+    }
+    
     // Create time-off request
+    // Note: API uses 'description' field, not 'reason'
     const timeOff = await createTimeOffRequest(
       employee.id,
       parseInt(leaveTypeId),
       startDate,
       endDate,
-      comment
+      comment || '', // Use comment as description
+      null, // leave_request_entries (for partial days) - not implemented yet
+      false // skip_approval - keep false to require approval
     );
     
     // Format response message
