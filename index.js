@@ -25,6 +25,18 @@ const app = new App({
   processBeforeResponse: true,
   customRoutes: [
     {
+      path: '/health',
+      method: ['GET'],
+      handler: async (req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'ok', 
+          timestamp: new Date().toISOString(),
+          bot: 'slack-peopleforce-bot'
+        }));
+      },
+    },
+    {
       path: '/webhook/peopleforce',
       method: ['POST'],
       handler: async (req, res) => {
@@ -92,6 +104,8 @@ async function initialize() {
     console.log(`📅 Scheduled sync job started (every 15 minutes)`);
     console.log(`🔔 Webhook endpoint: http://localhost:${port}/webhook/peopleforce`);
     console.log(`   Configure this URL in PeopleForce: Settings → Webhooks`);
+    console.log(`🏥 Health check: http://localhost:${port}/health`);
+    console.log(`📝 Slack events endpoint: http://localhost:${port}/slack/events`);
   } catch (error) {
     console.error('❌ Failed to start bot:', error);
     process.exit(1);
