@@ -487,6 +487,128 @@ app.action('leave_type', async ({ ack, body, client }) => {
 });
 
 /**
+ * Handle start date change - validate date range
+ */
+app.action('start_date', async ({ ack, body, client }) => {
+  await ack();
+  
+  try {
+    const startDate = body.actions[0].selected_date;
+    const viewId = body.view.id;
+    const currentView = body.view;
+    
+    // Get end date from current view
+    const endDate = currentView.state?.values?.end_block?.end_date?.selected_date;
+    
+    if (endDate && endDate < startDate) {
+      // Update modal to show error hint on end date
+      const updatedBlocks = currentView.blocks.map(block => {
+        if (block.block_id === 'end_block') {
+          return {
+            ...block,
+            hint: {
+              type: 'plain_text',
+              text: '⚠️ End date must be on or after start date'
+            }
+          };
+        }
+        return block;
+      });
+      
+      await client.views.update({
+        view_id: viewId,
+        view: {
+          ...currentView,
+          blocks: updatedBlocks
+        }
+      });
+    } else {
+      // Clear error hint if dates are valid
+      const updatedBlocks = currentView.blocks.map(block => {
+        if (block.block_id === 'end_block' && block.hint?.text?.includes('⚠️')) {
+          return {
+            ...block,
+            hint: undefined
+          };
+        }
+        return block;
+      });
+      
+      await client.views.update({
+        view_id: viewId,
+        view: {
+          ...currentView,
+          blocks: updatedBlocks
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error handling start date change:', error);
+  }
+});
+
+/**
+ * Handle end date change - validate date range
+ */
+app.action('end_date', async ({ ack, body, client }) => {
+  await ack();
+  
+  try {
+    const endDate = body.actions[0].selected_date;
+    const viewId = body.view.id;
+    const currentView = body.view;
+    
+    // Get start date from current view
+    const startDate = currentView.state?.values?.start_block?.start_date?.selected_date;
+    
+    if (startDate && endDate < startDate) {
+      // Update modal to show error hint on end date
+      const updatedBlocks = currentView.blocks.map(block => {
+        if (block.block_id === 'end_block') {
+          return {
+            ...block,
+            hint: {
+              type: 'plain_text',
+              text: '⚠️ End date must be on or after start date'
+            }
+          };
+        }
+        return block;
+      });
+      
+      await client.views.update({
+        view_id: viewId,
+        view: {
+          ...currentView,
+          blocks: updatedBlocks
+        }
+      });
+    } else {
+      // Clear error hint if dates are valid
+      const updatedBlocks = currentView.blocks.map(block => {
+        if (block.block_id === 'end_block' && block.hint?.text?.includes('⚠️')) {
+          return {
+            ...block,
+            hint: undefined
+          };
+        }
+        return block;
+      });
+      
+      await client.views.update({
+        view_id: viewId,
+        view: {
+          ...currentView,
+          blocks: updatedBlocks
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error handling end date change:', error);
+  }
+});
+
+/**
  * Handle modal submission
  */
 app.view('timeoff_request', async ({ ack, view, body, client }) => {
@@ -507,6 +629,11 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     const onDemandCheckbox = view.state.values.on_demand_block?.on_demand?.selected_options || [];
     const isOnDemand = onDemandCheckbox.some(option => option.value === 'on_demand');
   
+    // Validate dates BEFORE processing
+    if (endDate < startDate) {
+      throw new Error('❌ End date cannot be before start date. Please select a valid date range.');
+    }
+    
     console.log(`📝 Processing time-off request:`, {
       userId: slackUserId,
       leaveTypeId,
@@ -535,46 +662,69 @@ app.view('timeoff_request', async ({ ack, view, body, client }) => {
     // Store mapping for future use
     userEmailMap[email.toLowerCase()] = slackUserId;
     
-    // Get leave type details to check for required fields
+    // Get leave type details AND policy to check for required fields
     let leaveTypeDetails = null;
+    let leavePolicy = null;
     let requiresDocument = false;
+    let requiresComment = false;
+    
     try {
-      leaveTypeDetails = await getLeaveTypeById(parseInt(leaveTypeId));
-      console.log(`✅ Found leave type details:`, {
-        name: leaveTypeDetails?.name || leaveTypeDetails?.title,
-        id: leaveTypeDetails?.id,
-        requiresDocument: leaveTypeDetails?.requires_document || leaveTypeDetails?.document_required || false
-      });
+      const [typeDetails, policy] = await Promise.all([
+        getLeaveTypeById(parseInt(leaveTypeId)),
+        getLeavePolicyByTypeId(leaveTypeId).catch(() => null) // Policy fetch is optional
+      ]);
       
-      // Check if document is required (based on leave type settings)
-      requiresDocument = leaveTypeDetails?.requires_document || 
-                         leaveTypeDetails?.document_required || 
-                         leaveTypeDetails?.requires_attachment || 
-                         false;
+      leaveTypeDetails = typeDetails;
+      leavePolicy = policy;
       
-      // If document is required but not provided, reject submission
-      if (requiresDocument && !hasDocument) {
-        throw new Error('This leave type requires a supporting document. Please upload a document and try again.');
+      // Log full API responses to understand field structure
+      console.log(`✅ Found leave type details:`, JSON.stringify(leaveTypeDetails, null, 2));
+      if (leavePolicy) {
+        console.log(`✅ Found leave policy:`, JSON.stringify(leavePolicy, null, 2));
       }
       
-      // Check if leave type supports on-demand requests
-      // Note: This might be a policy setting, not a leave type setting
-      const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
-                               leaveTypeDetails?.supports_on_demand || 
-                               leaveTypeDetails?.on_demand_enabled || 
-                               false;
+      // Check if document is required (check both leave type and policy)
+      requiresDocument = leaveTypeDetails?.requires_document || 
+                         leaveTypeDetails?.document_required || 
+                         leaveTypeDetails?.requires_attachment ||
+                         leavePolicy?.requires_document ||
+                         leavePolicy?.document_required ||
+                         leavePolicy?.requires_attachment ||
+                         false;
+      
+      // Check if comment/description is required (check both leave type and policy)
+      requiresComment = leaveTypeDetails?.requires_reason || 
+                        leaveTypeDetails?.requires_description || 
+                        leaveTypeDetails?.requires_comment ||
+                        leavePolicy?.requires_reason ||
+                        leavePolicy?.requires_description ||
+                        leavePolicy?.requires_comment ||
+                        false;
       
       console.log(`📋 Leave type settings:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
         requiresDocument,
-        supportsOnDemand
+        requiresComment,
+        allLeaveTypeFields: Object.keys(leaveTypeDetails || {}),
+        allPolicyFields: Object.keys(leavePolicy || {})
       });
+      
+      // Validate required fields
+      if (requiresDocument && !hasDocument) {
+        throw new Error('⚠️ This leave type requires a supporting document. Please upload a document and try again.');
+      }
+      
+      if (requiresComment && !comment.trim()) {
+        throw new Error('⚠️ This leave type requires a reason/comment. Please provide a reason for your leave request.');
+      }
+      
     } catch (typeError) {
-      if (typeError.message.includes('requires a supporting document')) {
-        throw typeError; // Re-throw validation errors
+      // Re-throw validation errors (required document/comment)
+      if (typeError.message.includes('requires') || typeError.message.includes('⚠️')) {
+        throw typeError;
       }
       console.warn('Could not fetch leave type details:', typeError.message);
-      // Continue anyway - not critical
+      // Continue anyway - not critical if we can't fetch details
     }
     
     // Handle document upload if provided
