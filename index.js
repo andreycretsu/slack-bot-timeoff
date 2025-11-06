@@ -246,13 +246,13 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
       },
     });
     
-    // Add document upload field (always shown, but required for some types)
+    // Add document upload field (ALWAYS shown - will be made required dynamically based on leave type)
     blocks.push({
       type: 'input',
       block_id: 'document_block',
       label: { type: 'plain_text', text: 'Supporting Document' },
       hint: { type: 'plain_text', text: 'Upload supporting documents (e.g., medical certificate, proof of leave). Required for some leave types.' },
-      optional: true, // Will be made required dynamically based on leave type
+      optional: true, // Will be made required dynamically based on leave type selection
       element: {
         type: 'file_input',
         action_id: 'document_upload',
@@ -261,39 +261,28 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
       },
     });
     
-    // Add on-demand toggle (only show if any leave type supports it)
-    // Check if any leave type supports on-demand
-    const anySupportsOnDemand = Object.values(leaveTypesMap).some(type => 
-      type.allows_on_demand || 
-      type.supports_on_demand || 
-      type.on_demand_enabled ||
-      type.on_demand ||
-      false
-    );
-    
-    if (anySupportsOnDemand || leaveTypesMap.length === 0) {
-      // Show on-demand toggle if at least one type supports it, or if we don't have type info
-      blocks.push({
-        type: 'input',
-        block_id: 'on_demand_block',
-        label: { type: 'plain_text', text: 'On Demand' },
-        hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request (available for some leave types)' },
-        optional: true,
-        element: {
-          type: 'checkboxes',
-          action_id: 'on_demand',
-          options: [
-            {
-              text: {
-                type: 'plain_text',
-                text: 'This is an on-demand leave request'
-              },
-              value: 'on_demand'
-            }
-          ]
-        }
-      });
-    }
+    // Add on-demand toggle (ALWAYS shown - will be shown/hidden dynamically based on leave type)
+    // Always show it initially - will be hidden if leave type doesn't support it
+    blocks.push({
+      type: 'input',
+      block_id: 'on_demand_block',
+      label: { type: 'plain_text', text: 'On Demand' },
+      hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request (available for some leave types)' },
+      optional: true,
+      element: {
+        type: 'checkboxes',
+        action_id: 'on_demand',
+        options: [
+          {
+            text: {
+              type: 'plain_text',
+              text: 'This is an on-demand leave request'
+            },
+            value: 'on_demand'
+          }
+        ]
+      }
+    });
     
     // Open modal - this must happen after ack()
     if (!body.trigger_id) {
@@ -409,27 +398,50 @@ app.action('leave_type', async ({ ack, body, client }) => {
       const currentView = body.view;
       const updatedBlocks = currentView.blocks.map(block => {
         // Make document field required if leave type requires it
-        if (block.block_id === 'document_block' && requiresDocument) {
-          return {
-            ...block,
-            optional: false,
-            hint: {
-              type: 'plain_text',
-              text: '⚠️ This leave type requires a supporting document'
-            }
-          };
+        if (block.block_id === 'document_block') {
+          if (requiresDocument) {
+            return {
+              ...block,
+              optional: false,
+              hint: {
+                type: 'plain_text',
+                text: '⚠️ REQUIRED: This leave type requires a supporting document'
+              }
+            };
+          } else {
+            // Keep it optional
+            return {
+              ...block,
+              optional: true,
+              hint: {
+                type: 'plain_text',
+                text: 'Optional: Upload supporting documents if needed'
+              }
+            };
+          }
         }
         
         // Make comment field required if leave type requires it
-        if (block.block_id === 'comment_block' && requiresComment) {
-          return {
-            ...block,
-            optional: false,
-            hint: {
-              type: 'plain_text',
-              text: '⚠️ This leave type requires a reason/comment'
-            }
-          };
+        if (block.block_id === 'comment_block') {
+          if (requiresComment) {
+            return {
+              ...block,
+              optional: false,
+              hint: {
+                type: 'plain_text',
+                text: '⚠️ REQUIRED: This leave type requires a reason/comment'
+              }
+            };
+          } else {
+            return {
+              ...block,
+              optional: true,
+              hint: {
+                type: 'plain_text',
+                text: 'Optional: Add any additional details or reason for leave'
+              }
+            };
+          }
         }
         
         // Show/hide on-demand toggle based on leave type support
@@ -437,6 +449,16 @@ app.action('leave_type', async ({ ack, body, client }) => {
           if (!supportsOnDemand) {
             // Hide the field if not supported
             return null;
+          } else {
+            // Show it with hint
+            return {
+              ...block,
+              optional: true,
+              hint: {
+                type: 'plain_text',
+                text: `Available for ${leaveTypeDetails?.name || leaveTypeDetails?.title || 'this'} leave type`
+              }
+            };
           }
         }
         
