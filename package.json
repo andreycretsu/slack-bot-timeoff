@@ -1,0 +1,26 @@
+{
+  "name": "slack-peopleforce-bot",
+  "version": "1.0.0",
+  "description": "Slack bot that syncs PeopleForce time-offs with Slack user statuses",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [
+    "slack",
+    "peopleforce",
+    "time-off",
+    "bot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@slack/bolt": "^3.17.1",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  }
+}
+
