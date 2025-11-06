@@ -143,26 +143,58 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
   
   // Now handle the command (after ack)
   try {
-    // Use default options immediately (don't wait for API)
-    let typeOptions = [
-      { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
-      { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
-      { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
-      { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
-    ];
+    // Fetch time-off types from PeopleForce (with timeout protection)
+    let timeOffTypes = [];
+    let typeOptions = [];
+    let leaveTypesMap = {}; // Map of leave type ID to details
     
-    // Try to fetch time-off types from PeopleForce in background (non-blocking)
-    getTimeOffTypes().then(timeOffTypes => {
+    try {
+      // Fetch with 3 second timeout
+      timeOffTypes = await Promise.race([
+        getTimeOffTypes(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout fetching time-off types')), 3000)
+        )
+      ]);
+      
       if (timeOffTypes && timeOffTypes.length > 0) {
-        console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce (background)`);
-        // Note: Modal already opened with defaults, but we have the types for future use
+        console.log(`✅ Fetched ${timeOffTypes.length} time-off types from PeopleForce`);
+        
+        // Build options from PeopleForce leave types
+        typeOptions = timeOffTypes.map(type => {
+          // Store leave type details for later use
+          leaveTypesMap[String(type.id)] = type;
+          
+          return {
+            text: {
+              type: 'plain_text',
+              text: `${type.name || type.title || 'Unknown'} ${getEmojiForType(type.name || type.title || '')}`,
+            },
+            value: String(type.id),
+            description: type.description ? {
+              type: 'plain_text',
+              text: type.description.substring(0, 75) // Limit description length
+            } : undefined,
+          };
+        });
       }
-    }).catch(fetchError => {
-      console.error('Error fetching time-off types (non-blocking):', fetchError.message);
-      // Ignore - we already have default options
-    });
+    } catch (fetchError) {
+      console.error('Error fetching time-off types:', fetchError.message);
+      // Continue with default options if fetch fails
+    }
     
-    // Build modal blocks - base fields
+    // If no types found or fetch failed, use default options
+    if (typeOptions.length === 0) {
+      typeOptions = [
+        { text: { type: 'plain_text', text: 'Vacation 🌴' }, value: '1' },
+        { text: { type: 'plain_text', text: 'Sick Leave 🤒' }, value: '2' },
+        { text: { type: 'plain_text', text: 'Personal 🕓' }, value: '3' },
+        { text: { type: 'plain_text', text: 'Time Off 🏖️' }, value: '4' }
+      ];
+      console.log('⚠️  Using default leave types (PeopleForce API unavailable)');
+    }
+    
+    // Build modal blocks - base fields (always shown)
     const blocks = [
       {
         type: 'input',
@@ -195,39 +227,55 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
           initial_date: new Date().toISOString().split('T')[0],
         },
       },
-      {
-        type: 'input',
-        block_id: 'comment_block',
-        label: { type: 'plain_text', text: 'Reason/Comment' },
-        hint: { type: 'plain_text', text: 'Required for some leave types based on your policy' },
-        optional: true,
-        element: {
-          type: 'plain_text_input',
-          action_id: 'comment',
-          multiline: true,
-          placeholder: { type: 'plain_text', text: 'Add any additional details or reason for leave...' },
-        },
+    ];
+    
+    // Add comment/reason field (always shown, but may be required for some types)
+    blocks.push({
+      type: 'input',
+      block_id: 'comment_block',
+      label: { type: 'plain_text', text: 'Reason/Comment' },
+      hint: { type: 'plain_text', text: 'Required for some leave types based on your policy' },
+      optional: true, // Will be made required dynamically based on leave type
+      element: {
+        type: 'plain_text_input',
+        action_id: 'comment',
+        multiline: true,
+        placeholder: { type: 'plain_text', text: 'Add any additional details or reason for leave...' },
       },
-      // Add document upload field (always visible, but can be made required dynamically)
-      {
-        type: 'input',
-        block_id: 'document_block',
-        label: { type: 'plain_text', text: 'Supporting Document' },
-        hint: { type: 'plain_text', text: 'Upload supporting documents (e.g., medical certificate, proof of leave)' },
-        optional: true,
-        element: {
-          type: 'file_input',
-          action_id: 'document_upload',
-          filetypes: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'],
-          max_files: 1,
-        },
+    });
+    
+    // Add document upload field (always shown, but required for some types)
+    blocks.push({
+      type: 'input',
+      block_id: 'document_block',
+      label: { type: 'plain_text', text: 'Supporting Document' },
+      hint: { type: 'plain_text', text: 'Upload supporting documents (e.g., medical certificate, proof of leave). Required for some leave types.' },
+      optional: true, // Will be made required dynamically based on leave type
+      element: {
+        type: 'file_input',
+        action_id: 'document_upload',
+        filetypes: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'],
+        max_files: 1,
       },
-      // Add boolean toggle for "On demand" or similar fields
-      {
+    });
+    
+    // Add on-demand toggle (only show if any leave type supports it)
+    // Check if any leave type supports on-demand
+    const anySupportsOnDemand = Object.values(leaveTypesMap).some(type => 
+      type.allows_on_demand || 
+      type.supports_on_demand || 
+      type.on_demand_enabled ||
+      type.on_demand ||
+      false
+    );
+    
+    if (anySupportsOnDemand || leaveTypesMap.length === 0) {
+      // Show on-demand toggle if at least one type supports it, or if we don't have type info
+      blocks.push({
         type: 'input',
         block_id: 'on_demand_block',
         label: { type: 'plain_text', text: 'On Demand' },
-        hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request' },
+        hint: { type: 'plain_text', text: 'Check if this is an on-demand leave request (available for some leave types)' },
         optional: true,
         element: {
           type: 'checkboxes',
@@ -242,8 +290,8 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
             }
           ]
         }
-      },
-    ];
+      });
+    }
     
     // Open modal - this must happen after ack()
     if (!body.trigger_id) {
@@ -295,7 +343,7 @@ app.command('/request-time-off', async ({ ack, body, client, respond }) => {
 
 /**
  * Handle leave type selection change (dynamic field updates)
- * Updates modal with additional fields based on selected leave type
+ * Updates modal to show/hide required fields based on selected leave type
  */
 app.action('leave_type', async ({ ack, body, client }) => {
   await ack();
@@ -310,24 +358,81 @@ app.action('leave_type', async ({ ack, body, client }) => {
     try {
       const leaveTypeDetails = await getLeaveTypeById(parseInt(selectedTypeId));
       
-      // Check if leave type supports on-demand
+      // Check what fields are required for this leave type
+      const requiresDocument = leaveTypeDetails?.requires_document || 
+                               leaveTypeDetails?.document_required || 
+                               leaveTypeDetails?.requires_attachment || 
+                               false;
+      
       const supportsOnDemand = leaveTypeDetails?.allows_on_demand || 
                                leaveTypeDetails?.supports_on_demand || 
                                leaveTypeDetails?.on_demand_enabled || 
                                false;
       
-      // Update modal to show/hide on-demand toggle based on leave type
-      // Note: This requires views.update - for now, we show all fields
-      // Future: Use views.update to dynamically show/hide fields
+      const requiresComment = leaveTypeDetails?.requires_reason || 
+                              leaveTypeDetails?.requires_description || 
+                              leaveTypeDetails?.requires_comment || 
+                              false;
+      
       console.log(`📋 Leave type details:`, {
         name: leaveTypeDetails?.name || leaveTypeDetails?.title,
+        requiresDocument,
         supportsOnDemand,
-        requiresDocument: leaveTypeDetails?.requires_document || false
+        requiresComment
       });
       
+      // Update modal to make fields required/optional based on leave type
+      const currentView = body.view;
+      const updatedBlocks = currentView.blocks.map(block => {
+        // Make document field required if leave type requires it
+        if (block.block_id === 'document_block' && requiresDocument) {
+          return {
+            ...block,
+            optional: false,
+            hint: {
+              type: 'plain_text',
+              text: '⚠️ This leave type requires a supporting document'
+            }
+          };
+        }
+        
+        // Make comment field required if leave type requires it
+        if (block.block_id === 'comment_block' && requiresComment) {
+          return {
+            ...block,
+            optional: false,
+            hint: {
+              type: 'plain_text',
+              text: '⚠️ This leave type requires a reason/comment'
+            }
+          };
+        }
+        
+        // Show/hide on-demand toggle based on leave type support
+        if (block.block_id === 'on_demand_block') {
+          if (!supportsOnDemand) {
+            // Hide the field if not supported
+            return null;
+          }
+        }
+        
+        return block;
+      }).filter(block => block !== null); // Remove null blocks (hidden fields)
+      
+      // Update the modal view
+      await client.views.update({
+        view_id: viewId,
+        view: {
+          ...currentView,
+          blocks: updatedBlocks
+        }
+      });
+      
+      console.log(`✅ Updated modal for leave type: ${leaveTypeDetails?.name || leaveTypeDetails?.title}`);
+      
     } catch (typeError) {
-      console.error('Error fetching leave type details:', typeError.message);
-      // Continue - not critical
+      console.error('Error fetching/updating leave type details:', typeError.message);
+      // Continue - not critical, modal will still work with default fields
     }
     
   } catch (error) {
