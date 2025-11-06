@@ -190,8 +190,17 @@ export async function syncTimeOffsToSlack(client, userEmailMap = {}, userClient 
         
         if (!slackUserId) {
           console.warn(`⚠️  Slack user not found for email: ${email}`);
+          console.warn(`   Available Slack emails: ${Object.keys(emailToSlackId).slice(0, 5).join(', ')}...`);
+          console.warn(`   Time-off employee data:`, {
+            employeeId: employee?.id || employeeId,
+            employeeEmail: employeeEmail,
+            employeeEmailFromAPI: employee?.email,
+            contactEmail: employee?.contact_email
+          });
           continue;
         }
+        
+        console.log(`✅ Found Slack user ${slackUserId} for email ${email}`);
         
         // Update status for this user
         await updateSlackStatus(client, slackUserId, timeOff, userClient);

@@ -96,9 +96,19 @@ export async function processWebhookEvent(event, client, userEmailMap, userClien
     // If it's a leave request event (any action), trigger a sync
     if (eventType?.includes('leave_request') || eventType?.includes('leave') || eventType?.includes('time_off')) {
       console.log('🔄 Triggering sync due to webhook event...');
-      await syncTimeOffsToSlack(client, userEmailMap, userClient);
+      console.log(`   Event type: ${eventType}`);
+      console.log(`   Leave request data:`, {
+        id: leaveRequest?.id || leaveRequest?.data?.id,
+        employeeId: leaveRequest?.data?.attributes?.employee_id || leaveRequest?.employee_id,
+        state: leaveRequest?.data?.attributes?.state || leaveRequest?.state,
+        employee: leaveRequest?.data?.employee || leaveRequest?.employee
+      });
+      
+      const result = await syncTimeOffsToSlack(client, userEmailMap, userClient);
+      console.log(`✅ Webhook sync complete: ${result.updated} updated, ${result.cleared} cleared, ${result.errors} errors`);
     } else {
       console.log(`⚠️  Unknown webhook event type: ${eventType}, skipping...`);
+      console.log(`   Full event:`, JSON.stringify(event, null, 2));
     }
     
   } catch (error) {
