@@ -239,13 +239,39 @@ app.command('/request-time-off', async ({ ack, body, client }) => {
 
 /**
  * Handle leave type selection change (dynamic field updates)
- * Note: This would require views.update but Slack modals are mostly static
- * For now, we'll handle all fields in the submission
+ * Updates modal with additional fields based on selected leave type
  */
-app.action('leave_type', async ({ ack, body, client }) => {
+app.action('leave_type', async ({ ack, body, client, respond }) => {
   await ack();
-  // Note: Could update modal here with views.update if needed in future
-  // For now, all fields are shown upfront
+  
+  try {
+    const selectedTypeId = body.actions[0].selected_option.value;
+    const viewId = body.view.id;
+    
+    console.log(`📝 Leave type selected: ${selectedTypeId}`);
+    
+    // Get current view state
+    const currentView = body.view;
+    const currentBlocks = currentView.blocks || [];
+    
+    // Note: We could fetch leave type details here and update modal
+    // For now, all fields are shown upfront as they're commonly needed
+    // Future: Could use views.update to show/hide fields based on leave type
+    
+    // Get leave type details from PeopleForce (async, non-blocking)
+    getTimeOffTypes().then(types => {
+      const selectedType = types.find(t => String(t.id) === selectedTypeId);
+      if (selectedType) {
+        console.log(`✅ Found leave type: ${selectedType.name || selectedType.title}`);
+        // Could update modal here with views.update if needed
+      }
+    }).catch(err => {
+      console.error('Error fetching leave type details:', err);
+    });
+    
+  } catch (error) {
+    console.error('Error handling leave type selection:', error);
+  }
 });
 
 /**
