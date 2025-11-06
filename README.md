@@ -72,6 +72,7 @@ NOTIFICATION_CHANNEL=
    - `users:read` - To read user info
    - `users:read.email` - To get user emails
    - `users.profile:write` - To update user statuses
+   - `files:read` - **REQUIRED for document uploads** in modals
 
 4. Scroll down to **"User Token Scopes"** and add:
    - `users.profile:write` - To update user statuses (REQUIRED for status updates)
